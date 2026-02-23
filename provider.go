@@ -59,7 +59,7 @@ func findClosestMatches(zone string, record libdns.Record, currentRecords []clie
 	}
 	var matchingRecords []client.Record
 	for _, currentRecord := range currentRecords {
-		libDnsRecord, err := constructLibDNSRecord(zone, currentRecord.Record)
+		libDnsRecord, err := toRecord(zone, currentRecord.Record)
 		if err != nil {
 			return matchingRecord, err
 		}
@@ -104,7 +104,7 @@ func findClosestMatches(zone string, record libdns.Record, currentRecords []clie
 
 }
 
-func constructLibDNSRecord(zone string, record client.Record) (dnsRecord libdns.Record, err error) {
+func toRecord(zone string, record client.Record) (dnsRecord libdns.Record, err error) {
 	// This provider supports also
 	// * PTR
 	// * SPF (weird as it should be a TXT record)
@@ -159,7 +159,7 @@ func (p *Provider) GetRecords(ctx context.Context, zone string) (records []libdn
 		return records, fmt.Errorf("invoking GetRecords on client: %w", err)
 	}
 	for _, clientRecord := range clientRecords {
-		record, err := constructLibDNSRecord(zone, clientRecord.Record)
+		record, err := toRecord(zone, clientRecord.Record)
 		if err != nil {
 			return records, fmt.Errorf("constructing record %v: %w", clientRecord, err)
 		}
@@ -201,7 +201,7 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []lib
 		if err != nil {
 			return deletedRecords, fmt.Errorf("deleting type=%q record=%q zone=%q: %w", record.RR().Type, record.RR().Name, zone, err)
 		}
-		deletedRecord, err := constructLibDNSRecord(zone, matchingRecord)
+		deletedRecord, err := toRecord(zone, matchingRecord)
 		if err != nil {
 			return deletedRecords, fmt.Errorf("constructing libdns.Record: %w", err)
 		}
