@@ -29,7 +29,6 @@ const (
 
 // Provider facilitates DNS record manipulation with <TODO: PROVIDER NAME>.
 type Provider struct {
-	// TODO: Put config fields here (with snake_case json struct tags on exported fields), for example:
 	APIToken string `json:"api_token,omitempty"`
 	client   *client.PPHClient
 	// Exported config fields should be JSON-serializable or omitted (`json:"-"`)
@@ -211,12 +210,18 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []lib
 	return deletedRecords, nil
 }
 
+// ListZones lists all the zones in the account.
+func (p *Provider) ListZones(ctx context.Context) ([]libdns.Zone, error) {
+	return nil, fmt.Errorf("TODO: not implemented")
+}
+
 // Interface guards
 var (
 	_ libdns.RecordGetter   = (*Provider)(nil)
 	_ libdns.RecordAppender = (*Provider)(nil)
 	_ libdns.RecordSetter   = (*Provider)(nil)
 	_ libdns.RecordDeleter  = (*Provider)(nil)
+	_ libdns.ZoneLister     = (*Provider)(nil)
 )
 
 func main() {
