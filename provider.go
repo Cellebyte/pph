@@ -25,11 +25,10 @@ const (
 // when methods are called; sync.Once can help with this, and/or you can use a
 // sync.(RW)Mutex in your Provider struct to synchronize implicit provisioning.
 
-// Provider facilitates DNS record manipulation with <TODO: PROVIDER NAME>.
+// Provider facilitates DNS record manipulation with pph
 type Provider struct {
-	APIToken string `json:"api_token,omitempty"`
-	client   *client.PPHClient
-	// Exported config fields should be JSON-serializable or omitted (`json:"-"`)
+	APIToken string            `json:"api_token,omitempty"`
+	client   *client.PPHClient `json:"-"`
 }
 
 func New(token string) *Provider {
@@ -53,7 +52,6 @@ func (p *Provider) getClient() *client.PPHClient {
 
 // GetRecords lists all the records in the zone.
 func (p *Provider) GetRecords(ctx context.Context, zone string) (records []libdns.Record, err error) {
-	// Make sure to return RR-type-specific structs, not libdns.RR structs.
 	clientRecords, _, err := p.client.GetRecords(zone)
 	if err != nil {
 		return records, fmt.Errorf("invoking GetRecords on client: %w", err)
@@ -64,7 +62,7 @@ func (p *Provider) GetRecords(ctx context.Context, zone string) (records []libdn
 			return records, fmt.Errorf("constructing record %v: %w", clientRecord, err)
 		}
 		if record == nil {
-			// This skips unsupported Records like PTRs and others
+			// This skips unsupported Records like PTR's and others
 			continue
 		}
 		records = append(records, record)
@@ -74,14 +72,12 @@ func (p *Provider) GetRecords(ctx context.Context, zone string) (records []libdn
 
 // AppendRecords adds records to the zone. It returns the records that were added.
 func (p *Provider) AppendRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
-	// Make sure to return RR-type-specific structs, not libdns.RR structs.
 	return nil, fmt.Errorf("TODO: not implemented")
 }
 
 // SetRecords sets the records in the zone, either by updating existing records or creating new ones.
 // It returns the updated records.
 func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
-	// Make sure to return RR-type-specific structs, not libdns.RR structs.
 	return nil, fmt.Errorf("TODO: not implemented")
 }
 
@@ -149,5 +145,4 @@ func main() {
 	for _, record := range deletedRecords {
 		fmt.Println(record.RR().Type, ":", libdns.AbsoluteName(record.RR().Name, zone), "->", record.RR().Data)
 	}
-
 }
