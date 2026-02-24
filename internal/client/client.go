@@ -82,40 +82,45 @@ func (c PPHClient) GetRecords(zone string) (records []RecordGet, domain DomainGe
 	return c.GetRecordsByDomain(domain)
 }
 
-func (c PPHClient) CreateRecord(domain DomainGet, record Record, replace bool) error {
+func (c PPHClient) CreateRecord(domain DomainGet, record Record, replace bool) (createdRecord *Record, err error) {
 	resp, err := c.client.ClientDomainsAPI.ClientDomainsDomainIdDnsRecordCreatePost(c.clientContext, domain.ID).XToken(
 		c.token,
 	).ClientDomainsDomainIdDnsRecordCreatePostRequest(
 		pphclient.ClientDomainsDomainIdDnsRecordCreatePostRequest{
 			Record: &pphclient.ClientDomainsDomainIdDnsRecordCreatePostRequestRecord{
 				// Record.ID is ignored on creation.
-				Name:    &record.Name,
-				Content: &record.Content,
-				Type:    &record.Type,
-				Ttl:     pphclient.PtrFloat32(float32(record.TTL)),
-				Replace: &replace,
+				Name:     &record.Name,
+				Content:  &record.Content,
+				Type:     &record.Type,
+				Ttl:      pphclient.PtrFloat32(float32(record.TTL)),
+				Priority: pphclient.PtrFloat32(float32(record.Prio)),
+				Replace:  &replace,
 			},
 		},
 	).Execute()
 	if err != nil {
-		return fmt.Errorf("creating record=%q in zone=%q: %w", record.Name, domain.Domain, err)
+		return createdRecord, fmt.Errorf("creating record=%q in zone=%q: %w", record.Name, domain.Domain, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		errorMessage := APIError{}
-		err := json.Unmarshal(body, &errorMessage)
-		if err != nil {
-			return fmt.Errorf("unmarshaling APIError: %w", err)
-		}
-		return fmt.Errorf("creating record=%q in zone=%q got message=%q: %w", record.Name, domain.Domain, errorMessage.Data.Messages, err)
-	}
-
 	if err != nil {
-		return fmt.Errorf("reading body: %w", err)
+		return nil, fmt.Errorf("reading body: %w", err)
 	}
-
-	return nil
+	// this is ugly but the API does not know about statusCodes
+	errorMessage := APIError{}
+	err = json.Unmarshal(body, &errorMessage)
+	if err == nil && errorMessage.Error {
+		if !errorMessage.Error {
+			return createdRecord, nil
+		}
+		return createdRecord, fmt.Errorf("creating record=%q in zone=%q: %v", record.Name, domain.Domain, errorMessage)
+	}
+	createRecord := RecordCreate{}
+	err = json.Unmarshal(body, &createRecord)
+	if err != nil {
+		return createdRecord, fmt.Errorf("unmarshalling RecordCreate: %w", err)
+	}
+	return &createRecord.Data.RecordCreate.Record, nil
 }
 
 func (c PPHClient) DeleteRecord(zone string, record Record) error {

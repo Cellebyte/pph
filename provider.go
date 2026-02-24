@@ -1,9 +1,10 @@
 // Package pph implements a DNS record management client compatible
 // with the libdns interfaces for PrepaidHoster.
-package main
+package pph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -78,7 +79,34 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, records []lib
 // SetRecords sets the records in the zone, either by updating existing records or creating new ones.
 // It returns the updated records.
 func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
-	return nil, fmt.Errorf("TODO: not implemented")
+	setRecords := []libdns.Record{}
+	currentRecords, domain, err := p.client.GetRecords(zone)
+	if err != nil {
+		return setRecords, fmt.Errorf("invoking GetRecords on client: %w", err)
+	}
+	for _, record := range records {
+		matchingRecord, err := findClosestMatches(zone, record, currentRecords, false)
+		if err != nil && !errors.Is(err, NotFoundMatchError) {
+			return setRecords, fmt.Errorf("finding match: %w", err)
+		}
+		clientRecord, err := fromRecord(zone, record)
+		if matchingRecord != nil {
+			clientRecord.ID = matchingRecord.ID
+		}
+		createdRecord, err := p.client.CreateRecord(domain, clientRecord, true)
+		if err != nil {
+			return nil, fmt.Errorf("invoking CreateRecord on client: %w", err)
+		}
+		if createdRecord == nil {
+			return setRecords, nil
+		}
+		setRecord, err := toRecord(zone, *createdRecord)
+		if err != nil {
+
+		}
+		setRecords = append(setRecords, setRecord)
+	}
+	return setRecords, nil
 }
 
 // DeleteRecords deletes the specified records from the zone. It returns the records that were deleted.
@@ -89,15 +117,15 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []lib
 		return deletedRecords, fmt.Errorf("invoking GetRecords on client: %w", err)
 	}
 	for _, record := range records {
-		matchingRecord, err := findClosestMatches(zone, record, currentRecords)
+		matchingRecord, err := findClosestMatches(zone, record, currentRecords, true)
 		if err != nil {
 			return deletedRecords, fmt.Errorf("finding match: %w", err)
 		}
-		err = p.client.DeleteRecord(zone, matchingRecord)
+		err = p.client.DeleteRecord(zone, *matchingRecord)
 		if err != nil {
-			return deletedRecords, fmt.Errorf("deleting type=%q record=%q zone=%q: %w", record.RR().Type, record.RR().Name, zone, err)
+			return deletedRecords, fmt.Errorf("invoking DeleteRecord on client with type=%q record=%q zone=%q: %w", record.RR().Type, record.RR().Name, zone, err)
 		}
-		deletedRecord, err := toRecord(zone, matchingRecord)
+		deletedRecord, err := toRecord(zone, *matchingRecord)
 		if err != nil {
 			return deletedRecords, fmt.Errorf("constructing libdns.Record: %w", err)
 		}
@@ -119,30 +147,3 @@ var (
 	_ libdns.RecordDeleter  = (*Provider)(nil)
 	_ libdns.ZoneLister     = (*Provider)(nil)
 )
-
-func main() {
-	zone := "cellebyte.de"
-	dnsProvider := New("")
-	ctx := context.Background()
-	records, err := dnsProvider.GetRecords(ctx, zone)
-	if err != nil {
-		panic(fmt.Errorf("GetRecords: %w", err))
-	}
-	for _, record := range records {
-		fmt.Println(record.RR().Type, ":", libdns.AbsoluteName(record.RR().Name, zone), "->", record.RR().Data)
-	}
-	deleteRecords := []libdns.Record{
-		libdns.CNAME{
-			Name:   "tester",
-			Target: "test.cellebyte.de",
-		},
-	}
-	deletedRecords, err := dnsProvider.DeleteRecords(ctx, "cellebyte.de", deleteRecords)
-	if err != nil {
-		panic(fmt.Errorf("DeleteRecords %v: %w", deleteRecords, err))
-	}
-	fmt.Println("Removed Records:")
-	for _, record := range deletedRecords {
-		fmt.Println(record.RR().Type, ":", libdns.AbsoluteName(record.RR().Name, zone), "->", record.RR().Data)
-	}
-}

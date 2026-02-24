@@ -36,18 +36,23 @@ type DomainRecordsGet struct {
 }
 
 type APIError struct {
-	Data struct {
-		Error    bool     `json:"error"`
-		Type     string   `json:"type"`
-		URL      string   `json:"url"`
-		Messages []string `json:"messages"`
-		Input    []any    `json:"input"`
-	} `json:"data"`
+	Error   bool   `json:"error"`
+	Type    string `json:"type"`
+	URL     string `json:"url"`
+	Message string `json:"message"`
+	Input   struct {
+		Record struct {
+			Content string `json:"content"`
+			Name    string `json:"name"`
+			Replace bool   `json:"replace"`
+			TTL     int64  `json:"ttl"`
+			Type    string `json:"type"`
+		} `json:"record"`
+	} `json:"input"`
 }
-
 type RecordCreate struct {
 	Data struct {
-		Removed      bool `json:"removed"`
+		Removed      int `json:"removed"`
 		RecordCreate struct {
 			Record       `json:",inline"`
 			DomainID     int `json:"domain_id"`
