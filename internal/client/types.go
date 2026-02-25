@@ -2,6 +2,10 @@ package client
 
 import "time"
 
+type PPHProviderData struct {
+	ID int `json:"id,omitempty"`
+}
+
 type DomainGet struct {
 	ID              int       `json:"id"`
 	Domain          string    `json:"domain"`

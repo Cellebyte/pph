@@ -123,11 +123,7 @@ func (c PPHClient) CreateRecord(domain DomainGet, record Record, replace bool) (
 	return &createRecord.Data.RecordCreate.Record, nil
 }
 
-func (c PPHClient) DeleteRecord(zone string, record Record) error {
-	domain, err := c.GetDomain(zone)
-	if err != nil {
-		return fmt.Errorf("getting domain for zone=%q: %w", zone, err)
-	}
+func (c PPHClient) DeleteRecord(domain DomainGet, record Record) error {
 	resp, err := c.client.ClientDomainsAPI.ClientDomainsDomainIdDnsRecordDeletePost(c.clientContext, domain.ID).XToken(
 		c.token,
 	).ClientDomainsDomainIdDnsRecordDeletePostRequest(
@@ -137,7 +133,7 @@ func (c PPHClient) DeleteRecord(zone string, record Record) error {
 			},
 		}).Execute()
 	if err != nil {
-		return fmt.Errorf("deleting record=%q in zone=%q: %w", record.Name, zone, err)
+		return fmt.Errorf("deleting record=%q in zone=%q: %w", record.Name, domain.Domain, err)
 	}
 	defer resp.Body.Close()
 	_, err = io.ReadAll(resp.Body)

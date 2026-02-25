@@ -1,7 +1,6 @@
 package pph
 
 import (
-	"errors"
 	"fmt"
 	"net/netip"
 	"time"
@@ -16,6 +15,10 @@ func toRecord(zone string, record client.Record) (dnsRecord libdns.Record, err e
 	// * SPF (weird as it should be a TXT record)
 	// * TLSA
 	relativeName := libdns.RelativeName(record.Name, zone)
+	ttl := time.Duration(record.TTL) * time.Second
+	providerData := client.PPHProviderData{
+		ID: record.ID,
+	}
 	switch record.Type {
 	case "A":
 		// lol break is default
@@ -27,127 +30,111 @@ func toRecord(zone string, record client.Record) (dnsRecord libdns.Record, err e
 		}
 		dnsRecord = libdns.Address{
 			Name:         relativeName,
-			TTL:          time.Duration(record.TTL) * time.Second,
+			TTL:          ttl,
 			IP:           ip,
-			ProviderData: record,
+			ProviderData: providerData,
 		}
 	case "TXT":
 		dnsRecord = libdns.TXT{
 			Name:         relativeName,
-			TTL:          time.Duration(record.TTL) * time.Second,
+			TTL:          ttl,
 			Text:         record.Content,
-			ProviderData: record,
+			ProviderData: providerData,
 		}
 	case "CNAME":
 		dnsRecord = libdns.CNAME{
 			Name:         relativeName,
-			TTL:          time.Duration(record.TTL) * time.Second,
+			TTL:          ttl,
 			Target:       record.Content,
-			ProviderData: record,
+			ProviderData: providerData,
 		}
 	case "MX":
 		dnsRecord = libdns.MX{
 			Name:         relativeName,
-			TTL:          time.Duration(record.TTL) * time.Second,
+			TTL:          ttl,
 			Preference:   record.Prio,
 			Target:       record.Content,
-			ProviderData: record,
+			ProviderData: providerData,
+		}
+	default:
+		dnsRecord = libdns.RR{
+			Type: record.Type,
+			Name: relativeName,
+			TTL:  ttl,
+			Data: record.Content,
 		}
 	}
 	return dnsRecord, nil
 }
 
 func fromRecord(zone string, record libdns.Record) (dnsRecord client.Record, err error) {
+	rr := record.RR()
+
 	relativeName := libdns.RelativeName(record.RR().Name, zone)
-	switch record.RR().Type {
-	case "A":
-		// lol break is default
-		fallthrough
-	case "AAAA":
-		// lol break is default
-		fallthrough
-	case "TXT":
-		// lol break is default
-		fallthrough
-	case "CNAME":
-		dnsRecord = client.Record{
-			Name:    relativeName,
-			Type:    record.RR().Type,
-			TTL:     int(record.RR().TTL.Abs().Seconds()),
-			Content: record.RR().Data,
-		}
-	case "MX":
-		parsed, err := record.RR().Parse()
+	if relativeName == "@" {
+		relativeName = ""
+	}
+
+	dnsRecord = client.Record{
+		Type: rr.Type,
+		Name: relativeName,
+		TTL:  int(rr.TTL.Abs().Seconds()),
+	}
+
+	if rr, ok := record.(libdns.RR); ok {
+		// if passed in variable is an RR, parse to get the specific type
+		record, err = rr.Parse()
 		if err != nil {
-			return dnsRecord, fmt.Errorf("libdns.Parse(): %w", err)
-		}
-		if parsedMX, ok := parsed.(libdns.MX); ok {
-			dnsRecord = client.Record{
-				Name:    relativeName,
-				Type:    parsedMX.RR().Type,
-				TTL:     int(parsedMX.RR().TTL.Abs().Seconds()),
-				Content: parsedMX.Target,
-				Prio:    parsedMX.Preference,
-			}
+			return dnsRecord, err
 		}
 	}
-	return dnsRecord, nil
+	switch rr := record.(type) {
+	case libdns.Address:
+		dnsRecord.IDfromProviderData(rr.ProviderData)
+		dnsRecord.Content = rr.IP.String()
+	case libdns.CNAME:
+		dnsRecord.IDfromProviderData(rr.ProviderData)
+		dnsRecord.Content = rr.Target
+	case libdns.TXT:
+		dnsRecord.IDfromProviderData(rr.ProviderData)
+		dnsRecord.Content = rr.Text
+	case libdns.MX:
+		dnsRecord.IDfromProviderData(rr.ProviderData)
+		dnsRecord.Content = rr.Target
+		dnsRecord.Prio = rr.Preference
+	default:
+		err = fmt.Errorf("dnsRecord %+v: record type not implemented", record)
+	}
+	return dnsRecord, err
 }
 
-var NotFoundMatchError = errors.New("no matching Record found")
-
-func findClosestMatches(zone string, record libdns.Record, currentRecords []client.RecordGet, delete bool) (matchingRecord *client.Record, err error) {
-	if record == nil {
-		return matchingRecord, fmt.Errorf("missing record")
+func Equal(recordA libdns.Record, recordB libdns.Record, delete bool) (bool, error) {
+	if recordA == nil || recordB == nil {
+		return false, fmt.Errorf("missing recordA=%q or recordB=%q", recordA, recordB)
 	}
-	var matchingRecords []client.Record
-	for _, currentRecord := range currentRecords {
-		libDnsRecord, err := toRecord(zone, currentRecord.Record)
-		if err != nil {
-			return matchingRecord, err
-		}
-		if libDnsRecord == nil {
-			continue
-		}
-		// most specific match to find Record
-		if (record.RR().Name != "" && record.RR().Name == libDnsRecord.RR().Name) &&
-			(record.RR().Data != "" && record.RR().Data == libDnsRecord.RR().Data) &&
-			(record.RR().Type != "" && record.RR().Type == libDnsRecord.RR().Type) &&
-			(record.RR().TTL == libDnsRecord.RR().TTL) {
-			matchingRecords = append(matchingRecords, currentRecord.Record)
-			continue
-		}
-		// try to use Data as a unique identifier
-		if (record.RR().Name != "" && record.RR().Name == libDnsRecord.RR().Name) &&
-			(record.RR().Data != "" && record.RR().Data == libDnsRecord.RR().Data) &&
-			(record.RR().Type != "" && record.RR().Type == libDnsRecord.RR().Type) &&
-			(record.RR().TTL == time.Duration(0)) {
-			matchingRecords = append(matchingRecords, currentRecord.Record)
-			continue
-		}
-		// try to compare using Name and Type
-		if (record.RR().Name != "" && record.RR().Name == libDnsRecord.RR().Name) &&
-			(record.RR().Type != "" && record.RR().Type == libDnsRecord.RR().Type) &&
-			// this is needed, to decide if we are called from SetRecords or from DeleteRecords
-			// When called from SetRecords we want a match even if the content differs as we will
-			// update it anyways.
-			((record.RR().Data == "") && delete || (record.RR().Data != "") && !delete) &&
-			(record.RR().TTL == time.Duration(0)) {
-			matchingRecords = append(matchingRecords, currentRecord.Record)
-			continue
-		}
-		if record.RR().Name == "" || record.RR().Type == "" {
-			return matchingRecord, fmt.Errorf("missing enough information name=%q or type=%q are empty", record.RR().Name, record.RR().Type)
-		}
+	// most specific match to find Record
+	if (recordA.RR().Name != "" && recordA.RR().Name == recordB.RR().Name) &&
+		(recordA.RR().Data != "" && recordA.RR().Data == recordB.RR().Data) &&
+		(recordA.RR().Type != "" && recordA.RR().Type == recordB.RR().Type) &&
+		(recordA.RR().TTL == recordB.RR().TTL) {
+		return true, nil
 	}
-	if len(matchingRecords) < 1 {
-		return matchingRecord, NotFoundMatchError
+	// try to use Data as a unique identifier
+	if (recordA.RR().Name != "" && recordA.RR().Name == recordB.RR().Name) &&
+		(recordA.RR().Data != "" && recordA.RR().Data == recordB.RR().Data) &&
+		(recordA.RR().Type != "" && recordA.RR().Type == recordB.RR().Type) &&
+		(recordA.RR().TTL == time.Duration(0)) {
+		return true, nil
 	}
-	if len(matchingRecords) > 1 {
-		return matchingRecord, fmt.Errorf("finding multiple matching record for name=%q type=%q content=%q found: %v [%d]", record.RR().Name, record.RR().Type, record.RR().Data, matchingRecords, len(matchingRecords))
+	// try to compare using Name and Type
+	if (recordA.RR().Name != "" && recordA.RR().Name == recordB.RR().Name) &&
+		(recordA.RR().Type != "" && recordA.RR().Type == recordB.RR().Type) &&
+		// this is needed, to decide if we are called from AppendRecords, SetRecords or from DeleteRecords
+		// When called from SetRecords we want a match even if the content differs as we will
+		// update it anyways.
+		((recordA.RR().Data == "") && delete || (recordA.RR().Data != "") && !delete) &&
+		(recordA.RR().TTL == time.Duration(0)) {
+		return true, nil
 	}
-	// now it is unique
-	matchingRecord = &matchingRecords[0]
-	return matchingRecord, err
-
+	return false, nil
 }
