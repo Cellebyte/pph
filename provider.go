@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/libdns/libdns"
 	"github.com/libdns/pph/internal/client"
@@ -29,6 +30,7 @@ const (
 type Provider struct {
 	APIToken string            `json:"api_token,omitempty"`
 	client   *client.PPHClient `json:"-"`
+	lock     sync.Mutex        `json:"-"`
 }
 
 func New(token string) *Provider {
@@ -52,6 +54,8 @@ func (p *Provider) getClient() *client.PPHClient {
 
 // GetRecords lists all the records in the zone.
 func (p *Provider) GetRecords(ctx context.Context, zone string) (records []libdns.Record, err error) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	records, _, err = p.getRecordsWithDomain(ctx, zone)
 	return records, err
 }
@@ -77,6 +81,8 @@ func (p *Provider) getRecordsWithDomain(ctx context.Context, zone string) (recor
 
 // AppendRecords adds records to the zone. It returns the records that were added.
 func (p *Provider) AppendRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	prevs, domain, err := p.getRecordsWithDomain(ctx, zone)
 	if err != nil {
 		return nil, err
@@ -104,7 +110,7 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, records []lib
 			}
 			record, err := toRecord(zone, *createdRecord)
 			if err != nil {
-				return created, fmt.Errorf("creating libdnsRecord: %w", err)
+				return created, fmt.Errorf("creating libdns.Record: %w", err)
 			}
 			created = append(created, record)
 		}
@@ -115,55 +121,49 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, records []lib
 // SetRecords sets the records in the zone, either by updating existing records or creating new ones.
 // It returns the updated records.
 func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
-	prevs, err := p.GetRecords(ctx, zone)
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	prevs, domain, err := p.getRecordsWithDomain(ctx, zone)
 	if err != nil {
 		return nil, err
 	}
-	toDelete := []libdns.Record{}
-	for _, prev := range prevs {
-		for _, new := range records {
+	var updated []libdns.Record
+	for _, new := range records {
+		toUpdate := false
+		newClientRecord, err := fromRecord(zone, new)
+		if err != nil {
+			return updated, fmt.Errorf("constructing newClientRecord from zone=%q: %w", zone, err)
+		}
+		for _, prev := range prevs {
 			if ok, _ := Equal(new, prev, false); !ok {
-				toDelete = append(toDelete, prev)
+				// found a record we want to update
+				// adding the ID
+				toUpdate = true
+				oldClientRecord, err := fromRecord(zone, prev)
+				if err != nil {
+					return updated, fmt.Errorf("constructing oldClientRecord from zone=%q: %w", zone, err)
+				}
+				newClientRecord.ID = oldClientRecord.ID
+				break
 			}
 		}
+		clientRecord, err := p.client.CreateRecord(domain, newClientRecord, toUpdate)
+		if err != nil {
+			return updated, fmt.Errorf("calling CreateRecord in zone=%q: %w", zone, err)
+		}
+		newRecord, err := toRecord(zone, *clientRecord)
+		if err != nil {
+			return updated, fmt.Errorf("constructing libdns.Record from zone=%q: %w", zone, err)
+		}
+		updated = append(updated, newRecord)
 	}
-	_, err = p.DeleteRecords(ctx, zone, toDelete)
-	return p.AppendRecords(ctx, zone, records)
+	return updated, nil
 }
-
-// func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
-// 	setRecords := []libdns.Record{}
-// 	currentRecords, err := p.GetRecords(ctx, zone)
-// 	if err != nil {
-// 		return setRecords, fmt.Errorf("invoking GetRecords on client: %w", err)
-// 	}
-// 	for _, record := range records {
-// 		matchingRecord, err := findClosestMatches(zone, record, currentRecords, false)
-// 		if err != nil && !errors.Is(err, NotFoundMatchError) {
-// 			return setRecords, fmt.Errorf("finding match: %w", err)
-// 		}
-// 		clientRecord, err := fromRecord(zone, record)
-// 		if matchingRecord != nil {
-// 			clientRecord.ID = matchingRecord.ID
-// 		}
-// 		createdRecord, err := p.client.CreateRecord(domain, clientRecord, true)
-// 		if err != nil {
-// 			return nil, fmt.Errorf("invoking CreateRecord on client: %w", err)
-// 		}
-// 		if createdRecord == nil {
-// 			return setRecords, nil
-// 		}
-// 		setRecord, err := toRecord(zone, *createdRecord)
-// 		if err != nil {
-
-// 		}
-// 		setRecords = append(setRecords, setRecord)
-// 	}
-// 	return setRecords, nil
-// }
 
 // DeleteRecords deletes the specified records from the zone. It returns the records that were deleted.
 func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	prevs, domain, err := p.getRecordsWithDomain(ctx, zone)
 	if err != nil {
 		return nil, err

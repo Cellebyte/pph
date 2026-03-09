@@ -103,7 +103,13 @@ func fromRecord(zone string, record libdns.Record) (dnsRecord client.Record, err
 		dnsRecord.Content = rr.Target
 		dnsRecord.Prio = rr.Preference
 	default:
-		err = fmt.Errorf("dnsRecord %+v: record type not implemented", record)
+		if record.RR().Type == "SPF" {
+			// for whatever reason the provider has a weird SPF record
+			dnsRecord.Type = "TXT"
+			dnsRecord.Content = record.RR().Data
+		} else {
+			err = fmt.Errorf("dnsRecord %+v: record type not implemented", record)
+		}
 	}
 	return dnsRecord, err
 }
