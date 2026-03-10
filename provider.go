@@ -5,19 +5,10 @@ package pph
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/libdns/libdns"
 	"github.com/libdns/pph/internal/client"
-)
-
-const (
-	applicationName = "github.com/libdns/pph"
-
-	endpointURL = "https://fsn-01.api.pph.sh"
-
-	envVarName = "API_TOKEN"
 )
 
 // TODO: Providers must not require additional provisioning steps by the callers; it
@@ -31,58 +22,23 @@ type Provider struct {
 	APIToken string            `json:"api_token,omitempty"`
 	client   *client.PPHClient `json:"-"`
 	lock     sync.Mutex        `json:"-"`
-}
-
-func New(token string) *Provider {
-	if token == "" {
-		token = os.Getenv(envVarName)
-	}
-	if token == "" {
-		panic(fmt.Sprintf("%s: API token missing", applicationName))
-	}
-	p := Provider{
-		APIToken: token,
-	}
-	p.client = p.getClient()
-	return &p
-}
-
-func (p *Provider) getClient() *client.PPHClient {
-	p.client = client.New(p.APIToken, endpointURL)
-	return p.client
+	once     sync.Once         `json:"-"`
 }
 
 // GetRecords lists all the records in the zone.
 func (p *Provider) GetRecords(ctx context.Context, zone string) (records []libdns.Record, err error) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	p.init(ctx)
 	records, _, err = p.getRecordsWithDomain(ctx, zone)
 	return records, err
-}
-
-func (p *Provider) getRecordsWithDomain(ctx context.Context, zone string) (records []libdns.Record, domain client.DomainGet, err error) {
-	clientRecords, domain, err := p.client.GetRecords(zone)
-	if err != nil {
-		return records, domain, fmt.Errorf("invoking GetRecords on client: %w", err)
-	}
-	for _, clientRecord := range clientRecords {
-		record, err := toRecord(zone, clientRecord.Record)
-		if err != nil {
-			return records, domain, fmt.Errorf("constructing record %+v: %w", clientRecord, err)
-		}
-		if record == nil {
-			// This skips unsupported Records like PTR's and others
-			continue
-		}
-		records = append(records, record)
-	}
-	return records, domain, nil
 }
 
 // AppendRecords adds records to the zone. It returns the records that were added.
 func (p *Provider) AppendRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	p.init(ctx)
 	prevs, domain, err := p.getRecordsWithDomain(ctx, zone)
 	if err != nil {
 		return nil, err
@@ -123,6 +79,7 @@ func (p *Provider) AppendRecords(ctx context.Context, zone string, records []lib
 func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	p.init(ctx)
 	prevs, domain, err := p.getRecordsWithDomain(ctx, zone)
 	if err != nil {
 		return nil, err
@@ -164,6 +121,7 @@ func (p *Provider) SetRecords(ctx context.Context, zone string, records []libdns
 func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+	p.init(ctx)
 	prevs, domain, err := p.getRecordsWithDomain(ctx, zone)
 	if err != nil {
 		return nil, err
@@ -189,6 +147,9 @@ func (p *Provider) DeleteRecords(ctx context.Context, zone string, records []lib
 
 // ListZones lists all the zones in the account.
 func (p *Provider) ListZones(ctx context.Context) ([]libdns.Zone, error) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.init(ctx)
 	domains, err := p.client.GetDomains()
 	if err != nil {
 		return nil, fmt.Errorf("getting domains: %w", err)

@@ -39,7 +39,9 @@ import (
 func main() {
   zone := "zone.example.com"
   // uses the data from the API_TOKEN environment variable
-  p := pph.New("")
+  p := pph.Provider{
+      APIToken: "",
+  }
   ctx := context.Background()
   records, err := p.GetRecords(ctx, zone)
 }
